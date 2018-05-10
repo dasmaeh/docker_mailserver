@@ -1,0 +1,77 @@
+
+* Notes for the basic steps
+(to be extended by commands, examples, ...)
+- Setup the new server identically to the old server (domains, accounts, ...)
+- Relay the old server's mail domain (domain.com) to the old server
+  - remove form =mydestinations= 
+As I've stored that domain as a virtual domain in LDAP I've simply removed it from there.
+  - add mail.domain.com to =relay_domain_maps=
+#+BEGIN_SRC text :syntaxhl title=postfix-main.cf
+relay_domains = domain.com
+#+END_SRC
+  - add userdb to =relay_recipient_maps= (similar to =smtpd_sender_login_maps=)
+#+BEGIN_SRC text :syntaxhl title=postfix-main.cf
+relay_recipient_maps = ldap:/etc/postfix/ldap-users.cf ldap:/etc/postfix/ldap-aliases.cf ldap:/etc/postf$
+#+END_SRC
+  - add mail.domain.com as =relay_host=
+#+BEGIN_SRC text :syntaxhl title=.env
+RELAY_HOST=<Old server's IP>
+#+END_SRC
+- Create an alternative MX-Record for the domain pointing to the new server using a lower priority (higher number). Give the DNS some time to pick this change up (2days).
+- Configure the old server to accept mails from the backup MX
+Define the backup server in postfix's =main.cf=:
+#+BEGIN_SRC text :syntaxhl title=main.cf
+permit_mx_backup_networks=<new server's IP>
+#+END_SRC
+Add =permit_mx_backup= to =smtpd_recipient_restrictions= in postfix main.cf
+The whole block then could look like this:
+#+BEGIN_SRC text :syntaxhl title=main.cf
+smtpd_recipient_restrictions =
+  permit_sasl_authenticated,
+  permit_mynetworks,
+  permit_mx_backup,
+  reject_unauth_destination
+#+END_SRC
+- Make sure this works, by sending a mail explicitely to the new server (using different sender domain, telnet, ...)
+I've done two simple tests:
+** Send from a domain only set to the new server
+My new mailserver will be serving more domains than the old one, so i could simply send a mail from one of the new domains to an adress of the old domain and see how it got relayed.
+** Manual test using telnet
+This will always work. However I had to run this test from my old server as my local (dynamic) IP was on a blacklist. The idea is to connect to the new server via telnet on port 25 (smtp) and manually send a mail.
+#+BEGIN_SRC bash
+telnet newmail.domain.com 25
+#+END_SRC
+The server will great you with its banner:
+#+BEGIN_SRC text
+Trying 111.222.333.444...
+Connected to newmail.domain.com.
+Escape character is '^]'.
+220 newmail.domain.com ESMTP Postfix (Debian)
+#+END_SRC
+We now can try to manually send a mail. The lines marked have to be typed, the others are the responses from the server.
+#+BEGIN_SRC text :syntaxhl highlight=1,3,5,7,9,10,11
+HELO domain.com
+250 newmail.domain.com
+MAIL FROM: dummy@domain.com
+250 2.1.0 Ok
+RCPT TO:test@domain.com
+250 2.1.5 Ok
+data
+354 End data with <CR><LF>.<CR><LF>
+Testmail.
+
+.
+250 2.0.0 Ok: queued as DE7BE1CB5B7BA
+#+END_SRC
+That's it, we now have a working MX backup server.
+- Switch the MX entry in DNS to point to the new server. Incoming mail will now enter through the new server and will be relayed to the old one.
+  Wait until all DNS caches have picked up the new value (2 days to a week. Simply be patient)
+- Sync the mailboxes before the actual migration to save time (using imapsync)
+- Finally migrate during a downtime: 
+   - Stop the servers (postfix) and sync the mailboxes again.
+   - Change the new servers config to 'normal' (remove all relaying!)
+- Switch the domain (mail.domain.com) to point to the new server. It will take some time for DNS caches to pick, so for some time user login might not be possible! As the MX entry has been out in the DNS for some time, mails will be delivered though.
+
+* References
+- http://postfix.1071664.n5.nabble.com/seamless-postfix-migration-to-a-new-server-tp62119p62123.html
+- https://forum.ubuntuusers.de/topic/postfix-relay/ (German)

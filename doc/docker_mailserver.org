@@ -1,0 +1,537 @@
+#+BLOG: dasmaeh.de
+#+TITLE: A simple mailserver on docker
+#+CATEGORY: Cloud
+#+TAGS: docker, nginx, letsencrypt, mail, postfix, dovecot, ldap, sieve, spamassassin, clamav, dkim
+#+PERMALINK: simple-mailserver-docker
+
+INTRO
+
+
+Before migrating from my old mailserver, I've set up the new server on a test domain. Just to make sure everything works as intended.
+
+* Compose file
+
+Download the sample compose and environment files:
+#+BEGIN_SRC bash
+wget https://raw.githubusercontent.com/tomav/docker-mailserver/master/docker-compose.yml.dist
+wget https://raw.githubusercontent.com/tomav/docker-mailserver/master/.env.dist
+#+END_SRC
+and rename them for production. 
+#+BEGIN_SRC bash
+mv docker-compose.yml.dist docker-compose.yml
+mv .env.dist .env
+#+END_SRC
+Then adjust the files to fit your setup and needs.
+My config looks like this (all secrets removed ;) ):
+#+BEGIN_SRC text :syntaxhl title="docker-compose.yml collapse"
+version: '2'
+
+networks:
+    outside:
+        external:
+            name: proxy-tier
+
+services:
+  # dummy nginx for tls certificate generation
+  tls_dummy:
+    container_name: ${TLS_DUMMY_CONTAINERNAME}
+    image: nginx
+    restart: always
+    environment:
+      VIRTUAL_HOST: "${HOSTNAME}.${DOMAINNAME}"
+      LETSENCRYPT_HOST: "${HOSTNAME}.${DOMAINNAME}"
+      LETSENCRYPT_EMAIL: "${LE_ADDRESS}"
+    networks:
+      - outside
+
+  mail:
+    image: tvial/docker-mailserver:latest
+    hostname: ${HOSTNAME}
+    domainname: ${DOMAINNAME}
+    container_name: ${CONTAINER_NAME}
+    ports:
+    - "25:25"
+    - "143:143"
+    - "465:465"
+    - "587:587"
+    - "993:993"
+    external_links:
+    - ldap:${LDAP_SERVER_HOST}
+    volumes:
+    - ./data/mail:/var/mail
+    - ./data/mailstate:/var/mail-state
+    - ./config/:/tmp/docker-mailserver/
+    - /docker/ssl:/etc/letsencrypt/live:ro
+    - ./config/dovecot/10-mail.conf:/etc/dovecot/conf.d/10-mail.conf:ro
+    - ./config/postfix/ldap-domains.cf:/etc/postfix/ldap-domains.cf
+    environment:
+    - DMS_DEBUG=${DMS_DEBUG}
+    - ENABLE_CLAMAV=${ENABLE_CLAMAV}
+    - ONE_DIR=${ONE_DIR}
+    - ENABLE_POP3=${ENABLE_POP3}
+    - ENABLE_FAIL2BAN=${ENABLE_FAIL2BAN}
+    - ENABLE_MANAGESIEVE=${ENABLE_MANAGESIEVE}
+    - OVERRIDE_HOSTNAME=${OVERRIDE_HOSTNAME}
+    - POSTMASTER_ADDRESS=${POSTMASTER_ADDRESS}
+    - POSTSCREEN_ACTION=${POSTSCREEN_ACTION}
+    - REPORT_RECIPIENT=${REPORT_RECIPIENT}
+    - REPORT_INTERVAL=${REPORT_INTERVAL}
+    - SMTP_ONLY=${SMTP_ONLY}
+    - SSL_TYPE=${SSL_TYPE}
+    - TLS_LEVEL=${TLS_LEVEL}
+    - SPOOF_PROTECTION=${SPOOF_PROTECTION}
+    - ENABLE_SRS=${ENABLE_SRS}
+    - PERMIT_DOCKER=${PERMIT_DOCKER}
+    - VIRUSMAILS_DELETE_DELAY=${VIRUSMAILS_DELETE_DELAY}
+    - ENABLE_POSTFIX_VIRTUAL_TRANSPORT=${ENABLE_POSTFIX_VIRTUAL_TRANSPORT}
+    - POSTFIX_DAGENT=${POSTFIX_DAGENT}
+    - ENABLE_SPAMASSASSIN=${ENABLE_SPAMASSASSIN}
+    - SA_TAG=${SA_TAG}
+    - SA_TAG2=${SA_TAG2}
+    - SA_KILL=${SA_KILL}
+    - SA_SPAM_SUBJECT=${SA_SPAM_SUBJECT}
+    - ENABLE_FETCHMAIL=${ENABLE_FETCHMAIL}
+    - FETCHMAIL_POLL=${FETCHMAIL_POLL}
+    - ENABLE_LDAP=${ENABLE_LDAP}
+    - LDAP_START_TLS=${LDAP_START_TLS}
+    - LDAP_SERVER_HOST=${LDAP_SERVER_HOST}
+    - LDAP_SEARCH_BASE=${LDAP_SEARCH_BASE}
+    - LDAP_BIND_DN=${LDAP_BIND_DN}
+    - LDAP_BIND_PW=${LDAP_BIND_PW}
+    - LDAP_QUERY_FILTER_USER=${LDAP_QUERY_FILTER_USER}
+    - LDAP_QUERY_FILTER_GROUP=${LDAP_QUERY_FILTER_GROUP}
+    - LDAP_QUERY_FILTER_ALIAS=${LDAP_QUERY_FILTER_ALIAS}
+    - DOVECOT_TLS=${DOVECOT_TLS}
+    - DOVECOT_USER_FILTER=${DOVECOT_USER_FILTER}
+    - DOVECOT_PASS_FILTER=${DOVECOT_PASS_FILTER}
+    - DOVECOT_PASS_ATTRS=${DOVECOT_PASS_ATTRS}
+    - DOVECOT_USER_ATTRS=${DOVECOT_USER_ATTRS}
+    - ENABLE_POSTGREY=${ENABLE_POSTGREY}
+    - POSTGREY_DELAY=${POSTGREY_DELAY}
+    - POSTGREY_MAX_AGE=${POSTGREY_MAX_AGE}
+    - POSTGREY_TEXT=${POSTGREY_TEXT}
+    - ENABLE_SASLAUTHD=${ENABLE_SASLAUTHD}
+    - SASLAUTHD_MECHANISMS=${SASLAUTHD_MECHANISMS}
+    - SASLAUTHD_MECH_OPTIONS=${SASLAUTHD_MECH_OPTIONS}
+    - SASLAUTHD_LDAP_SERVER=${SASLAUTHD_LDAP_SERVER}
+    - SASLAUTHD_LDAP_SSL=${SASLAUTHD_LDAP_SSL}
+    - SASLAUTHD_LDAP_BIND_DN=${SASLAUTHD_LDAP_BIND_DN}
+    - SASLAUTHD_LDAP_PASSWORD=${SASLAUTHD_LDAP_PASSWORD}
+    - SASLAUTHD_LDAP_SEARCH_BASE=${SASLAUTHD_LDAP_SEARCH_BASE}
+    - SASLAUTHD_LDAP_FILTER=${SASLAUTHD_LDAP_FILTER}
+    - SASL_PASSWD=${SASL_PASSWD}
+    cap_add:
+    - NET_ADMIN
+    - SYS_PTRACE
+    restart: always
+#+END_SRC
+All screts and quite a lot of site specific options of this complex setup are kept in an environment file.
+#+BEGIN_SRC text :syntaxhl title=.env collapse
+# --------------------- General Settings --------------------
+HOSTNAME=mail
+DOMAINNAME=domain.com
+CONTAINER_NAME=mail
+TLS_DUMMY_CONTAINERNAME=mail_nginx_dummy
+OVERRIDE_HOSTNAME=
+DMS_DEBUG=0
+ONE_DIR=0
+POSTMASTER_ADDRESS=postmaster@domain.com
+PERMIT_DOCKER=network
+TLS_LEVEL=
+SPOOF_PROTECTION=
+ENABLE_SRS=0
+ENABLE_POP3=
+ENABLE_CLAMAV=1
+ENABLE_FAIL2BAN=1
+ENABLE_MANAGESIEVE=1
+POSTSCREEN_ACTION=enforce
+SMTP_ONLY=
+SSL_TYPE=letsencrypt
+VIRUSMAILS_DELETE_DELAY=
+ENABLE_POSTFIX_VIRTUAL_TRANSPORT=
+POSTFIX_DAGENT=
+REPORT_RECIPIENT=0
+REPORT_INTERVAL=daily
+
+# --------------------- Spamassassin section ------------------------
+ENABLE_SPAMASSASSIN=1
+SA_TAG=2.0
+SA_TAG2=6.31
+SA_KILL=6.31
+SA_SPAM_SUBJECT=***SPAM*****
+
+# --------------------- Fetchmail section ---------------------------
+ENABLE_FETCHMAIL=0
+FETCHMAIL_POLL=300
+
+# --------------------- LDAP section --------------------------------
+ENABLE_LDAP=1
+LDAP_START_TLS=no
+LDAP_SERVER_HOST=ldap1.domain.com
+LDAP_SEARCH_BASE=dc=domain,dc=com
+LDAP_BIND_DN=cn=admin,dc=domain,dc=com
+LDAP_BIND_PW=<somesecretpassword>
+LDAP_QUERY_FILTER_DOMAIN=associatedDomain=%s
+LDAP_QUERY_FILTER_USER=(&(mail=%s)(objectClass=mailAccount))
+LDAP_QUERY_FILTER_GROUP=(&(mailGroupMember=%s)(objectClass=mailGroup))
+LDAP_QUERY_FILTER_ALIAS=(&(mailalias=%s)(objectClass=mailAccount))
+
+# ---------------- Dovecot section -----------------------------------
+DOVECOT_TLS=no
+DOVECOT_USER_FILTER="(&(objectClass=person)(uid=%n))"
+DOVECOT_USER_ATTRS="/var/mail/%{ldap:mailbox}=home,maildir:/var/mail/%{ldap:mailbox}/Maildir=mail"
+DOVECOT_PASS_FILTER="(&(objectClass=mailAccount)(|(uid=%n)(mail=%u)(maildrop=%u)))"
+DOVECOT_PASS_ATTRS="uid=user,userPassword=password"
+
+# ---------------- Postgrey section -----------------------------------
+ENABLE_POSTGREY=0
+POSTGREY_DELAY=300
+POSTGREY_MAX_AGE=35
+POSTGREY_TEXT=Delayed by postgrey
+
+# ---------------- SASL section ----------------------------------------
+ENABLE_SASLAUTHD=0
+SASLAUTHD_MECHANISMS=rimap
+SASLAUTHD_MECH_OPTIONS=127.0.0.1
+SASLAUTHD_LDAP_SERVER=
+SASLAUTHD_LDAP_SSL=
+SASLAUTHD_LDAP_BIND_DN=
+SASLAUTHD_LDAP_PASSWORD=
+SASLAUTHD_LDAP_SEARCH_BASE=
+SASLAUTHD_LDAP_FILTER=
+SASL_PASSWD=
+
+# ---------------- SRS section ------------------
+SRS_EXCLUDE_DOMAINS=
+SRS_SECRET=
+
+#+END_SRC
+You can find my complete config on [[https://github.com/dasmaeh/docker_mailserver][github]].
+
+* Directories
+=/docker/mailserver=
+- =/config= storing several configuration files used by the container
+- =/data=
+  - =/mail= storing the mails
+  - =/mailstate= storing mail states for dovecot
+
+* Installation
+Pretty easy. Just do a 
+#+BEGIN_SRC bash
+docker-compose pull
+#+END_SRC
+to install all the docker images.
+* Configuration
+** Basic settings
+There are a few basic settings to be made for the mailserver to work. Basically you just need to set a domain, an adress for the postmaster and a name for the container.
+#+BEGIN_SRC text :syntaxhl title=.env
+HOSTNAME=mail
+DOMAINNAME=domain.com
+CONTAINER_NAME=mail
+#+END_SRC
+
+** TLS settings
+For security reasons I want the connections to and from my mail server to be encrypted. I'll be using a letsencrypt certificate automatically created and renewed by my [[https://dasmaeh.de/2018/02/24/automated-reverse-proxy-docker-nginx/][reverse https proxy]]. As this service is designed to work with web accessible apps I've created a dummy webserver. It's only purpose is to take care of the certificate.
+The certificate file then is mounted to the mailserver container and used for it's connection as well.
+The dummy container is set up in =docker-compose.yml=. To configure it set two environment variables:
+#+BEGIN_SRC text :syntaxhl title=.env
+TLS_DUMMY_CONTAINERNAME=mail_nginx_dummy
+LE_ADDRESS=admin@domain.com
+#+END_SRC
+Dummy webserver:
+#+BEGIN_SRC yaml :syntaxhl title=docker-compose linestart=8
+services:
+  # dummy nginx for tls certificate generation
+  tls_dummy:
+    container_name: ${TLS_DUMMY_CONTAINERNAME}
+    image: nginx
+    restart: always
+    environment:
+      VIRTUAL_HOST: "${HOSTNAME}.${DOMAINNAME}"
+      LETSENCRYPT_HOST: "${HOSTNAME}.${DOMAINNAME}"
+      LETSENCRYPT_EMAIL: "${LE_ADDRESS}"
+    networks:
+      - outside
+#+END_SRC
+Mounting the certificate:
+#+BEGIN_SRC yaml :syntaxhl title=docker-compose linestart=34 highlight=38
+volumes:
+  - ./data/mail:/var/mail
+  - ./data/mailstate:/var/mail-state
+  - ./config/:/tmp/docker-mailserver/
+  - /docker/ssl:/etc/letsencrypt/live:ro
+#+END_SRC
+
+** Configure ldap
+In my LDAP (TODO: LINK) I keep separate entries for domains and accounts. A domain entry looks like this:
+#+BEGIN_SRC ldif
+dn: ou=domain.com,ou=domains,dc=domain,dc=com
+objectClass: domainRelatedObject
+objectClass: organizationalUnit
+objectClass: top
+associatedDomain: domain.com
+ou: domain.com
+#+END_SRC
+An account entry looks like this:
+#+BEGIN_SRC ldif
+dn: cn=dummy,ou=people,dc=domain,dc=com
+objectClass: inetOrgPerson
+objectClass: mailAccount
+objectClass: organizationalPerson
+objectClass: person
+objectClass: posixAccount
+objectClass: shadowAccount
+objectClass: top
+cn: dummy
+gidNumber: 1004
+homeDirectory: /home/dummy
+mail: dummy@domain.com
+sn: dummy
+uid: dummy
+uidNumber: 1001
+gecos: Test Dummy
+givenName: Test
+loginShell: /bin/bash
+mailalias: dummy2@domain.com
+mailalias: test@domain2.com
+mailalias: test@domain.com
+mailbox: dummy
+preferredLanguage: de_DE
+userPassword:: <#averysecretpassword>
+#+END_SRC
+This setup has been working very well for me in the past years. So the new dockerized mail server should also make use of these information.
+
+*** Link the ldap container
+To enable the mailserver to read those settings from the ldap also running as a docker container I've created an ~external_link~ in ~docker-compose.yml~:
+#+BEGIN_SRC :syntaxhl title=docker-compose.yml firstline=32
+    external_links:
+    - ldap:${LDAP_SERVER_HOST}
+#+END_SRC
+This makes the docker container ~ldap~ available under the domain set as =${LDAP_SERVER_HOST}= in the environment file.
+
+*** Basic ldap settings for the mailserver
+In the environment file there arse some basic options to set to enable the mailserver container to actually contact the ldap server and read information. These are settings like the domain, the base dn and  an administrative account to use for binds.
+These are my settings:
+#+BEGIN_SRC text :syntaxhl title=.env
+# --------------------- LDAP section --------------------------
+ENABLE_LDAP=1
+LDAP_START_TLS=no
+LDAP_SERVER_HOST=ldap1.domain.com
+LDAP_SEARCH_BASE=dc=domain,dc=com
+LDAP_BIND_DN=cn=admin,dc=domain,dc=com
+LDAP_BIND_PW=<somesecretpassword>
+DOVECOT_TLS=no
+#+END_SRC
+
+*** Domain settings
+To have ~postfix~ use the domains saved in ldap I've created the necessary options in a little configuration snippet at =config/postfix/ldap-domains.cf=
+#+BEGIN_SRC :syntaxhl title=ldap-domains.cf highlight=9,10
+bind             = yes
+bind_dn = cn=admin,dc=domain,dc=com
+bind_pw = <somesecretpassword>
+search_base = dc=domain,dc=com
+server_host = ldap1.domain.com
+start_tls = no
+version          = 3
+
+query_filter = associatedDomain=%s
+result_attribute = associatedDomain
+#+END_SRC
+Then mount the file into the container:
+Edit ~docker-compose.yml~
+#+BEGIN_SRC text :syntaxhl title=docker-compose.yml firstline=34 highlight=39
+    volumes:
+    - ./data/mail:/var/mail
+    - ./data/mailstate:/var/mail-state
+    - ./config/:/tmp/docker-mailserver/
+    - /docker/ssl:/etc/letsencrypt/live:ro
+    - ./config/postfix/ldap-domains.cf:/etc/postfix/ldap-domains.cf
+#+END_SRC
+Restarting the container will put the option into action.
+
+*** Account settings
+Fortunately this is a lot easier as there are environment variable to control this.
+Some of them are related to postfix, some to dovecot. Basically they define filters for the ldap lookups to return only the information needed.
+My environment variables are set like this:
+#+BEGIN_SRC text :syntaxhl title=.env 
+LDAP_QUERY_FILTER_USER=(&(mail=%s)(objectClass=mailAccount))
+LDAP_QUERY_FILTER_GROUP=(&(mailGroupMember=%s)(objectClass=mailGroup))
+DOVECOT_USER_FILTER="(&(objectClass=person)(uid=%n))"
+DOVECOT_PASS_FILTER="(&(objectClass=mailAccount)(|(uid=%n)(mail=%u)(maildrop=%u)))"
+DOVECOT_PASS_ATTRS="uid=user,userPassword=password"
+#+END_SRC
+The exact details of these options will depend on your individual ldap setup.
+*** Aliases
+I've configured alias mail adresses in ldap as well. Those only work if mail and mailbox attributes are unique for each user and the ~mailalias~ attribute is used for additional adresses in ldap. Aliases using regular expressions cannot be defined in ldap.
+The following environment variable configures aliases to be taklen from ldap:
+#+BEGIN_SRC text :syntaxhl title=.env
+LDAP_QUERY_FILTER_ALIAS=(&(mailalias=%s)(objectClass=mailAccount))
+#+END_SRC
+
+** Adjust dovecot's mail location 
+I've had to change a few settings for dovecots handling of mailboxes to work with my ldap setup.
+To define the location of the mailbox using the account names from ldap I've set the following environment variable:
+#+BEGIN_SRC text :syntaxhl title=.env
+DOVECOT_USER_ATTRS="/var/mail/%{ldap:mailbox}=home,maildir:/var/mail/%{ldap:mailbox}/Maildir=mail"
+#+END_SRC
+Then copy the original config file from the container:
+#+BEGIN_SRC bash
+docker cp mail:/etc/dovecot/conf.d/10-mail.conf /docker/mailserver/config/dovecot/
+#+END_SRC
+I've changed the following options:
+#+BEGIN_SRC text :syntaxhl title=10-mailbox.conf
+##
+## Mailbox locations and namespaces
+##
+
+# Setting uid and gid to 5000 (docker) as the mailserver images keeps rewriting
+# permissions of /var/mail to docker:docker
+mail_gid = 5000
+mail_uid=5000
+
+# Location for users' mailboxes. The default is empty, which means that Dovecot
+# tries to find the mailboxes automatically. This won't work if the user
+# doesn't yet have any mail, so you should explicitly tell Dovecot the full
+# location.
+mail_home = /var/mail/%n
+mail_location = maildir:~/mail
+#+END_SRC 
+Finally mount the adjusted config file into the docker container. Edit ~docker-compose.yml~
+#+BEGIN_SRC text :syntaxhl title=docker-compose.yml firstline=34 highlight=39
+    volumes:
+    - ./data/mail:/var/mail
+    - ./data/mailstate:/var/mail-state
+    - ./config/:/tmp/docker-mailserver/
+    - /docker/ssl:/etc/letsencrypt/live:ro
+    - ./config/dovecot/10-mail.conf:/etc/dovecot/conf.d/10-mail.conf:ro
+    - ./config/postfix/ldap-domains.cf:/etc/postfix/ldap-domains.cf
+#+END_SRC
+Restarting the container will put the option into action.
+
+** Adjusting dovecot's namespace
+By default dovecot creates a set of directories for mail like 'Drafts', 'Sent', 'Junk' and 'Trash' and tells mail client to use them. I actually prefer these directories to be labeled im my mother language. Those name are pretty easy to change as they are define in a config file. So first copy that file from the container to the host:
+#+BEGIN_SRC bash
+docker cp mail:/etc/dovecot/conf.d/15-mailboxes.conf /docker/mailserver/config/dovecot/15-mailboxes.conf
+#+END_SRC
+Edit this file to fit your needs. I've just changed the names of the mailboxes to German. But you can also use a more complex setup here and define new namespaces.
+Finally mount the adjusted config file into the docker container. Edit e ~docker-compose.yml~
+#+BEGIN_SRC text :syntaxhl title=docker-compose.yml firstline=34 highlight=40
+    volumes:
+    - ./data/mail:/var/mail
+    - ./data/mailstate:/var/mail-state
+    - ./config/:/tmp/docker-mailserver/
+    - /docker/ssl:/etc/letsencrypt/live:ro
+    - ./config/dovecot/10-mail.conf:/etc/dovecot/conf.d/10-mail.conf:ro
+    - ./config/dovecot/15-mailboxes.conf:/etc/dovecot/conf.d/15-mailboxes.conf:ro
+    - ./config/postfix/ldap-domains.cf:/etc/postfix/ldap-domains.cf
+#+END_SRC
+Restarting the container will put the option into action.
+
+
+** Enable additional services
+The mailserver container comes with a lot of helpful services like spamassasin, fail2ban, sieve, DKIM, fetchmail etc. I'm using only some of them.
+*** Fail2ban
+I usually protect my dockerized services by a fail2ban service running on the host system. But as the mailserver container comes with fail2ban built in I'll be using this. It's just easier to set up that way:
+#+BEGIN_SRC text :syntaxhl title=.env
+ENABLE_FAIL2BAN=1
+#+END_SRC
+That's basically it. However you need to make sure the docker container has network admin capabilities to ban IPs.
+#+BEGIN_SRC yaml :syntaxhl title=docker-compose.yml
+cap_add:
+  - NET_ADMIN
+#+END_SRC
+*** Managesieve
+Managesieve will allow compatible clients to edit filter rules on the server. Enabling is easy again:
+#+BEGIN_SRC text :syntaxhl title=.env
+ENABLE_MANAGESIEVE=1
+#+END_SRC
+Note: Managesieve operates on port 4190, so make sure the container is listening on that port!
+*** Clamav
+Clamav is an open source virus scanner for linux. In the past 6 years running my [[https://dasmaeh.de/2011/12/12/mailserver-with-ldap-overview/][old mailserver]] it only caught about 3 or 4 virus infected mails. But who knows what is to come.
+Once again, anabling it is dead simple:
+#+BEGIN_SRC text :syntaxhl title=.env
+ENABLE_CLAMAV=1
+#+END_SRC
+*** Spamassassin
+Spam mails are a pain. Spamassassin is a very useful (and self learning )programm to classify mails as unwanted on several criteria.
+I've only made some basic settings for spamassasin for the beginning and will watch closely what happens to my mails. I will need to adjust them later as I've turned 'killing' off in order not to lose any mail.
+#+BEGIN_SRC text :syntaxhl title=.env
+ENABLE_SPAMASSASSIN=1
+# add spam info headers if at, or above that level:
+SA_TAG=2.0
+# add 'spam detected' headers at that level
+SA_TAG2=6.31
+# triggers spam evasive actions (using a high level will prevent mails from being deleted for testing!)
+SA_KILL=99
+# add tag to subject if spam detected
+SA_SPAM_SUBJECT=***SPAM*****
+#+END_SRC
+
+*** DKIM
+DKIM (Domain Key Identified Mail) is a mechanism to verify the origin of mails cryptograhpically. I've been using it in my[[https://dasmaeh.de/2014/02/08/dkim-with-amavis/][old setup]] as well. Setup is pretty easy, however make sure all the domains fopr your mailserver are setup before this step!
+To generate the keys run the following docker command:
+#+BEGIN_SRC bash
+docker run --rm \
+  -v "/docker/mailserver/config":/tmp/docker-mailserver \
+  -ti tvial/docker-mailserver:latest generate-dkim-config
+#+END_SRC
+I've done this step after migrating from my old server.
+* Github repositiories
+The mailserver container:
+https://github.com/tomav/docker-mailserver
+My setup: 
+https://github.com/dasmaeh/docker_mailserver
+* References:
+- https://tvi.al/simple-mail-server-with-docker/
+- https://github.com/tomav/docker-mailserver
+- https://github.com/tomav/docker-mailserver/issues/805
+- https://github.com/tomav/docker-mailserver/issues/680
+- https://github.com/tomav/docker-mailserver/wiki/Override-Default-Dovecot-Configuration
+- https://wiki.dovecot.org/HowTo/DovecotOpenLdap#dovecot-ldap.conf
+- https://wiki.dovecot.org/Namespaces
+- https://github.com/tomav/docker-mailserver/wiki/Override-Default-Dovecot-Configuration
+
+
+* TODOs
+TODO: Test groups
+TODO: Create DKIM certificates (for all domains!)
+TODO: Think about Elasticsearch (ELK)
+TODO: Think about shared mailboxes
+TODO: Systemd unit file (using watchexec!)
+TODO: Create a simple Readme.md
+* OLD:
+
+* Systemd unit file
+  To run the automated reverse proxy in the background and have it start at system boot I use a system unit file:
+#+BEGIN_SRC text :syntaxgl title="/etc/systemd/system/docker-nginx-proxy.service
+[Unit]
+Description=docker nginx for proxying
+After=docker.service
+Requires=docker.service
+
+
+[Service]
+Restart=Always
+# Stop and remove old containers:
+ExecStartPre=/usr/bin/docker-compose -f /docker/nginx_proxy/docker-compose.yml down -v
+ExecStartPre=/usr/bin/docker-compose -f /docker/nginx_proxy/docker-compose.yml rm -fv
+
+# Start the container
+ExecStart=/usr/bin/docker-compose -f /docker/nginx_proxy/docker-compose.yml up
+
+# Stop the container
+ExecStop=/usr/bin/docker-compose -f /docker/nginx_proxy/docker-compose.yml down -v
+
+[Install]
+WantedBy=docker.service
+#+END_SRC
+Now I can start the composition by
+#+BEGIN_SRC bash
+sudo systemctl start docker-nginx-proxy.service
+#+END_SRC
+and enable automatic start at system boot by
+#+BEGIN_SRC bash
+sudo systemctl enable docker-nginx-proxy.service
+#+END_SRC
+
+
