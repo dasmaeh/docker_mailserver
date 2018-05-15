@@ -476,6 +476,53 @@ docker run --rm \
   -ti tvial/docker-mailserver:latest generate-dkim-config
 #+END_SRC
 I've done this step after migrating from my old server.
+* Systemd unit file
+Usually I start my services with a pretty simple systemd unit file making use of docker-compose. But usually a services is a webapp that get's restarted automatically on cerificate renewal by the [[https://dasmaeh.de/2018/02/24/automated-reverse-proxy-docker-nginx/][automatic reverse proxy]]. However a mailserver is not a usual webapp. The only service getting restarted is the nginx dummy, the actual mailserver will still be using the old certificate.
+That's why I've created a little script that is doing two things:
+- start the complete composition
+- watch the certificate file (using =watchexec=) and whenever the file changes restart the mailserver container
+
+#+BEGIN_SRC bash :syntaxhl title="/docker/mailserver/run.sh"
+#!/bin/bash
+/usr/bin/docker-compose -f /docker/mailserver/docker-compose.yml up -d
+
+/usr/local/bin/watchexec --exts "pem" --watch /docker/ssl/mail.domain.com/ "/usr/bin/docker-compose -f /docker/mailserver/docker-compose.yml restart mailserver"
+#+END_SRC
+Another script for stopping:
+#+BEGIN_SRC bash :syntaxhl title="/docker/mailserver/stop.sh"
+#!/bin/bash
+/usr/bin/docker-compose -f /docker/mailserver/docker-compose.yml stop
+/usr/bin/docker-compose -f /docker/mailserver/docker-compose.yml rm -f
+#+END_SRC
+These scripts are then used in the systemd unit file at =/etc/systemd/system=:
+#+BEGIN_SRC text :syntaxhl title="docker-mailserver.service"
+[Unit]
+Description=mailserver as docker composition
+After=docker.service
+Requires=docker.service, docker-nginx-proxy.service
+
+[Service]
+Restart=Always
+ExecStartPre=-/usr/bin/docker stop mailserver
+ExecStartPre=-/usr/bin/docker kill mailserver
+ExecStartPre=-/usr/bin/docker rm mailserver
+ExecStartPre=-/usr/bin/docker stop mail_tls_dummy
+ExecStartPre=-/usr/bin/docker kill mail_tls_dummy
+ExecStartPre=-/usr/bin/docker rm mail_tls_dummy
+ExecStart=/docker/mailserver/run.sh
+ExecStop=/docker/mailserver/stop.sh
+
+[Install]
+WantedBy=docker.service
+#+END_SRC
+Finally start the service by
+#+BEGIN_SRC bash
+sudo systemctl start docker-mailserver.service
+#+END_SRC
+and enable it to be started automatically:
+#+BEGIN_SRC bash
+sudo systemctl enable docker-mailserver.service
+#+END_SRC
 * Github repositiories
 The mailserver container:
 https://github.com/tomav/docker-mailserver
@@ -497,41 +544,9 @@ TODO: Test groups
 TODO: Create DKIM certificates (for all domains!)
 TODO: Think about Elasticsearch (ELK)
 TODO: Think about shared mailboxes
-TODO: Systemd unit file (using watchexec!)
 TODO: Create a simple Readme.md
-* OLD:
-
-* Systemd unit file
-  To run the automated reverse proxy in the background and have it start at system boot I use a system unit file:
-#+BEGIN_SRC text :syntaxgl title="/etc/systemd/system/docker-nginx-proxy.service
-[Unit]
-Description=docker nginx for proxying
-After=docker.service
-Requires=docker.service
 
 
-[Service]
-Restart=Always
-# Stop and remove old containers:
-ExecStartPre=/usr/bin/docker-compose -f /docker/nginx_proxy/docker-compose.yml down -v
-ExecStartPre=/usr/bin/docker-compose -f /docker/nginx_proxy/docker-compose.yml rm -fv
 
-# Start the container
-ExecStart=/usr/bin/docker-compose -f /docker/nginx_proxy/docker-compose.yml up
-
-# Stop the container
-ExecStop=/usr/bin/docker-compose -f /docker/nginx_proxy/docker-compose.yml down -v
-
-[Install]
-WantedBy=docker.service
-#+END_SRC
-Now I can start the composition by
-#+BEGIN_SRC bash
-sudo systemctl start docker-nginx-proxy.service
-#+END_SRC
-and enable automatic start at system boot by
-#+BEGIN_SRC bash
-sudo systemctl enable docker-nginx-proxy.service
-#+END_SRC
 
 
