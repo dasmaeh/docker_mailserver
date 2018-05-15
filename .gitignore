@@ -1,2 +1,7 @@
+.env
+data/mail/*
+!data/mail/.gitkeep
+data/mailstate/*
+!data/mailstate/.gitkeep
 *.org~
 *.org#

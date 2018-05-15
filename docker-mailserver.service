@@ -1,0 +1,18 @@
+[Unit]
+Description=mailserver as docker composition
+After=docker.service
+Requires=docker.service, docker-nginx-proxy.service
+
+[Service]
+Restart=Always
+ExecStartPre=-/usr/bin/docker stop mailserver
+ExecStartPre=-/usr/bin/docker kill mailserver
+ExecStartPre=-/usr/bin/docker rm mailserver
+ExecStartPre=-/usr/bin/docker stop mail_tls_dummy
+ExecStartPre=-/usr/bin/docker kill mail_tls_dummy
+ExecStartPre=-/usr/bin/docker rm mail_tls_dummy
+ExecStart=/docker/mailserver/run.sh
+ExecStop=/docker/mailserver/stop.sh
+
+[Install]
+WantedBy=docker.service

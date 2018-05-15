@@ -1,0 +1,12 @@
+# Add docker host to allowed networks
+mynetworks = 127.0.0.0/8 [::1]/128 [fe80::]/64 172.16.0.0/12 37.120.189.100/32
+
+# Temporary relay options while migrating:
+
+relay_recipient_maps = ldap:/etc/postfix/ldap-users.cf ldap:/etc/postfix/ldap-aliases.cf ldap:/etc/postfix/ldap-groups.cf
+relay_domains = cbjck.de
+
+
+
+
+

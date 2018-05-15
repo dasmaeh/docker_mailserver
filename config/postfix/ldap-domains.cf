@@ -1,0 +1,10 @@
+bind             = yes
+bind_dn = cn=admin,dc=cbjck,dc=de
+bind_pw = B+rrH/9W
+search_base = dc=cbjck,dc=de
+server_host = ldap1.cbjck.de
+start_tls = no
+version          = 3
+
+query_filter = associatedDomain=%s
+result_attribute = associatedDomain
