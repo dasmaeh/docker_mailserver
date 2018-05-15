@@ -7,7 +7,7 @@ networks:
 
 services:
   # dummy nginx for tls certificate generation
-  tls_dummy:
+  mail_tls_dummy:
     container_name: ${TLS_DUMMY_CONTAINERNAME}
     image: nginx
     restart: always
